@@ -7,16 +7,15 @@ This project uses text mining techniques to analyze social media sentiment towar
 - Data visualization with `ggplot2` and `wordcloud`.
 
 ## Project Structure
-- `data/`: Contains raw and cleaned datasets.
-- `analysis/`: R scripts for sentiment analysis and topic modeling.
-- `reports/`: Final report and presentation slides.
-- `visuals/`: Generated plots and visualizations.
-- `scripts/`: Additional data preprocessing and visualization scripts.
+- **`Fianal Project.qmd`**: The main Quarto script containing all code and analysis.
+- **`data/`**:Datasets used in the analysis.
+- **`visuals/`**: Plots and visualizations generated from the data.
+- **`reports/`**: Final report summarizing insights.
 
 ## Tools and Libraries
-- R: `tidyverse`, `tm`, `text2vec`
-- Python: `pandas`, `matplotlib`
-- Visualization: `ggplot2`, `seaborn`
+- **R**: `tidyverse`, `tm`, `text2vec`, `ggplot2`
+- **Python**: `pandas`, `matplotlib`
+- **Quarto**: For integrated analysis and preliminary report generation.
 
 ## Usage
 1. Clone the repository:
