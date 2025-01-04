@@ -1,0 +1,926 @@
+---
+title: "Analyzing Social Media Sentiment Towards Electric Vehicles"
+author: "Edwin Drake Bwambale"
+format: pdf
+output:
+  pdf_document:
+    pandoc_args: ["--pdf-engine=xelatex", "--wrap=none"]
+editor: visual
+bibliography: references.bib
+---
+
+## Load packages
+
+```{r}
+#|iinclude: FALSE
+#install.packages("topicmodels")
+#install.packages("caret")
+#installed.packages("e1071")
+library(RedditExtractoR)#
+library(tidytext)#For text mining, tokenization, n-grams, and sentiment analysis.
+library(dplyr)#For data manipulation and summarization.
+library(ggplot2)#For visualization of term frequency and sentiment changes over time.
+library(janitor)
+library(topicmodels)#For topic modeling (LDA).
+library(caret)#For building classification models.
+library(e1071)
+library(lubridate)#For handling time-series data.
+library(tm)
+library(tidyr)
+library(tidytext)
+library(stringr)
+library(tidyverse)
+library(text2vec)
+library(word2vec)
+library(tokenizers)
+library(magrittr)
+library(textclean)
+library(wordcloud)
+library(sentimentr)
+library(syuzhet)
+library(Cairo)
+library(stminsights)
+library(reshape2)
+library(stringi)
+
+
+```
+
+```{r}
+
+
+#evs_data <- find_subreddits(" electric vehicles,electric cars,autonomus vehicles")
+
+#electric_vehicles <- data.frame(get_thread_content("https://www.reddit.com/r/electricvehicles/comments/1e81s7q/the_affordable_new_electric_cars_coming_in_2025/"))
+
+#str(electric_vehicles)
+
+#New_ev_data <- data.frame(get_thread_content("https://www.reddit.com/r/todayilearned/comments/1evnneo/til_some_electric_vehicles_add_idle_creep_to_make/"))
+
+#ev_nd_data <- data.frame(get_thread_content("https://www.reddit.com/r/electricvehicles/comments/1fstrt2/general_questions_and_purchasing_advice_thread/"))
+
+#current_evs <- data.frame(get_thread_content("https://www.reddit.com/r/unpopularopinion/comments/1esijk3/all_current_electric_vehicles_could_be_worthless/"))
+
+#latest_ev_data <- data.frame(get_thread_content("https://www.reddit.com/r/UsedCars/comments/18v41da/why_are_evs_selling_like_crap/"))
+
+#redditt_ev_analysis_data <-rbind(electric_vehicles, New_ev_data, ev_nd_data, latest_ev_data,current_evs)
+
+
+#redditt_ev_analysis_data <- redditt_ev_analysis_data %>%
+  #mutate(comments.comment = case_when(
+   # str_detect(comments.comment, "electric") ~ str_c(comments.comment, " ", evs_data$description[1]),
+    #str_detect(comments.comment, "autonomous") ~ str_c(comments.comment, " ", evs_data$description[2]),
+    #TRUE ~ comments.comment # Keep the original comment if no match
+  #))
+
+#write.csv(redditt_ev_analysis_data, "C:/Users/bedwi/OneDrive/MS ANALYTICS/ITEC 724 BIG DATA AND TEXT MINING/PROJECT/Datasets/redditt_ev_analysis_data.csv", row.names = FALSE)
+
+redditt_ev_analysis_data <- read_csv("Datasets/redditt_ev_analysis_data.csv",locale = locale(encoding = "UTF-8")) |> 
+mutate( comments.comment = stri_replace_all_regex(as.character(comments.comment), "[^[:print:]]", ""))
+
+head(redditt_ev_analysis_data$comments.comment)
+tail(redditt_ev_analysis_data$comments.comment)
+class(redditt_ev_analysis_data$comments.comment)
+glimpse(redditt_ev_analysis_data)
+```
+
+# Clean and preprocess the text data
+
+```{r}
+# Step 1: ASCII conversion and lowercase
+cleaned_comments <- redditt_ev_analysis_data %>%
+  mutate(clean_comment = iconv(comments.comment, to = "ASCII", sub = "")) %>%
+  mutate(clean_comment = str_to_lower(clean_comment))
+
+# Step 2: Replacing contractions and symbols, and removing numbers manually
+cleaned_comments <- cleaned_comments %>%
+  mutate(clean_comment = replace_contraction(clean_comment)) %>%
+  mutate(clean_comment = replace_symbol(clean_comment)) %>%
+  mutate(clean_comment = str_replace_all(clean_comment, "[0-9]+", "")) %>%  
+  mutate(clean_comment = str_trim(clean_comment))  
+
+# Step 3: Filtering out empty or NA values
+cleaned_comments <- cleaned_comments %>%
+  filter(!is.na(clean_comment), clean_comment != "")
+
+# Step 4: Tokenizing and removing stop words
+tokenized_comments <- cleaned_comments %>%
+  unnest_tokens(word, clean_comment) %>%
+  anti_join(stop_words, by = "word")
+```
+
+## Inductive Analysis
+
+### 1. Most frequently occurring keywords
+
+```{r keyword-frequency}
+#  term frequency
+word_freq <- tokenized_comments %>%
+  count(word, sort = TRUE)
+
+#  TF-IDF
+tfidf <- tokenized_comments %>%
+  filter(!str_detect(word, "httpswwwreuterscombusinessautostransportationdeadevbatteriesturngoldwithincentives")) %>%
+  count(comments.comment_id, word) %>%
+  bind_tf_idf(word, comments.comment_id, n) %>%
+  arrange(desc(tf_idf))
+
+#  top keywords
+
+# Create the plot
+keyword_freq_plot <- word_freq %>%
+  slice_max(n, n = 20) %>%
+  ggplot(aes(x = reorder(word, n), y = n)) +
+  geom_col(fill = "green", color = "#116500", size = 0.8) +
+  coord_flip() +
+  labs(title = "Top 20 Keywords in EV Discussions",
+       subtitle = "Based on frequency of occurrence",
+       x = NULL,
+       y = "Frequency") +
+  scale_y_continuous(expand = c(0, 0), limits = c(0, NA)) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(size = 16, face = "bold", margin = margin(b = 10)),
+    plot.subtitle = element_text(size = 12, color = "gray50", margin = margin(b = 20)),
+    axis.title.x = element_text(size = 12, face = "bold", margin = margin(t = 10)),
+    axis.text = element_text(size = 10),
+    axis.text.y = element_text(face = "bold"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    plot.margin = margin(t = 20, r = 20, b = 20, l = 20)
+  )
+
+# Displaying the plot
+print(keyword_freq_plot)
+
+# Function to save plot with specific device settings
+save_plot <- function(filename, plot, width, height, dpi, device, ...) {
+  device(filename, width = width, height = height, units = "in", res = dpi, ...)
+  print(plot)
+  dev.off()
+}
+
+# Save as high-resolution TIFF (600 dpi, LZW compression)
+save_plot(
+  "top_20_keywords_ev_discussions.tiff",
+  keyword_freq_plot,
+  width = 10,
+  height = 8,
+  dpi = 600,
+  device = tiff,
+  compression = "lzw"
+)
+
+# Save as JPEG for color/grayscale version (300 dpi, quality 50%)
+save_plot(
+  "top_20_keywords_ev_discussions.jpg",
+  keyword_freq_plot,
+  width = 10,
+  height = 8,
+  dpi = 300,
+  device = jpeg,
+  quality = 50
+)
+
+
+# Visualize top TF-IDF words
+tfidf_plot <- tfidf %>%
+  group_by(word) %>%
+  summarise(mean_tf_idf = mean(tf_idf)) %>%
+  slice_max(mean_tf_idf, n = 20) %>%
+  ggplot(aes(x = reorder(word, mean_tf_idf), y = mean_tf_idf)) +
+  geom_col(fill = "#4292c6", color = "#08519c", size = 0.8) +  # Adjusted colors for better contrast
+  coord_flip() +
+  labs(title = "Top 20 Words by TF-IDF Score",
+       subtitle = "Based on mean TF-IDF across all comments",
+       x = NULL,  # Remove x-axis label as it's self-explanatory
+       y = "Mean TF-IDF Score") +
+  scale_y_continuous(expand = c(0, 0), limits = c(0, NA)) +  # Start y-axis at 0
+  theme_minimal(base_size = 12) +  # Increase base font size
+  theme(
+    plot.title = element_text(size = 16, face = "bold", margin = margin(b = 10)),
+    plot.subtitle = element_text(size = 12, color = "gray50", margin = margin(b = 20)),
+    axis.title.x = element_text(size = 12, face = "bold", margin = margin(t = 10)),
+    axis.text = element_text(size = 10),
+    axis.text.y = element_text(face = "bold"),
+    panel.grid.major = element_blank(),  # Remove all major grid lines
+    panel.grid.minor = element_blank(),  # Remove all minor grid lines
+    plot.margin = margin(t = 20, r = 20, b = 20, l = 20)  # Add some margin around the plot
+  )
+
+# Display the plot
+print(tfidf_plot)
+
+# Function to save plot with specific device settings
+save_plot <- function(filename, plot, width, height, dpi, device, ...) {
+  device(filename, width = width, height = height, units = "in", res = dpi, ...)
+  print(plot)
+  dev.off()
+}
+
+# Save as high-resolution TIFF (600 dpi, LZW compression)
+save_plot(
+  "top_20_tfidf_words.tiff",
+  tfidf_plot,
+  width = 10,
+  height = 8,
+  dpi = 600,
+  device = tiff,
+  compression = "lzw"
+)
+
+# Save as JPEG for color/grayscale version (300 dpi, quality 50%)
+save_plot(
+  "top_20_tfidf_words.jpg",
+  tfidf_plot,
+  width = 10,
+  height = 8,
+  dpi = 300,
+  device = jpeg,
+  quality = 50
+)
+
+#  monochrome version of the plot
+tfidf_plot_mono <- tfidf_plot +
+  scale_fill_grey() +
+  scale_color_grey()
+
+# Save monochrome version as TIFF (600 dpi, LZW compression)
+save_plot(
+  "top_20_tfidf_words_mono.tiff",
+  tfidf_plot_mono,
+  width = 10,
+  height = 8,
+  dpi = 600,
+  device = tiff,
+  compression = "lzw"
+)
+
+```
+
+### 2. Key phrases and n-grams associated with sentiment
+
+```{r sentiment-ngrams}
+#  sentiment analysis using syuzhet
+sentiment_scores <- cleaned_comments %>%
+  mutate(sentiment = get_sentiment(clean_comment, method = "syuzhet")) %>%
+  select(comments.comment_id, sentiment)
+
+#  bigrams
+bigrams <- cleaned_comments %>%
+  unnest_tokens(bigram, clean_comment, token = "ngrams", n = 2) %>%
+  separate(bigram, c("word1", "word2"), sep = " ") %>%
+  filter(!word1 %in% stop_words$word,
+         !word2 %in% stop_words$word) %>%
+  unite(bigram, word1, word2, sep = " ")
+
+# Associate bigrams with sentiment
+bigram_sentiment <- bigrams %>%
+  inner_join(sentiment_scores, by = "comments.comment_id") %>%
+  group_by(bigram) %>%
+  summarise(mean_sentiment = mean(sentiment),
+            frequency = n()) %>%
+  filter(frequency > 5)  
+
+# Defining sentiment categories (Positive and Negative only)
+bigram_sentiment_categorized <- bigram_sentiment %>%
+  mutate(sentiment_category = case_when(
+    mean_sentiment > 0.05 ~ "Positive",
+    mean_sentiment < -0.05 ~ "Negative",
+    TRUE ~ NA_character_  # I am setting Neutral to NA so it can be filtered out
+  )) %>%
+  filter(!is.na(sentiment_category))  # Removing Neutral sentiments
+
+# Select top bigrams for each category
+top_bigrams <- bigram_sentiment_categorized %>%
+  group_by(sentiment_category) %>%
+  slice_max(abs(mean_sentiment), n = 10) %>%
+  ungroup()
+
+# Defining color palette for Positive and Negative sentiment
+sentiment_colors <- c("Positive" = "purple", "Negative" = "yellow")
+
+
+ggplot(top_bigrams, aes(x = reorder_within(bigram, abs(mean_sentiment), sentiment_category), 
+                        y = mean_sentiment, 
+                        fill = sentiment_category)) +
+  geom_col() +
+  coord_flip() +
+  facet_wrap(~sentiment_category, scales = "free_y") +
+  scale_x_reordered() +
+  scale_fill_manual(values = sentiment_colors) +
+  labs(title = "Top 10 Bigrams by Sentiment Category",
+       subtitle = "Based on mean sentiment scores",
+       x = "Bigram",
+       y = "Mean Sentiment Score",
+       fill = "Sentiment Category") +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold", size = 16, margin = margin(b = 10)),
+    plot.subtitle = element_text(size = 12, color = "gray50", margin = margin(b = 20)),
+    axis.title = element_text(face = "bold"),
+    legend.position = "bottom",
+    legend.title = element_text(face = "bold"),
+    strip.text = element_text(face = "bold", size = 12),
+    panel.grid.major.y = element_blank(),
+    panel.border = element_rect(fill = NA, color = "gray80")
+  )
+
+# Saving the plot as a high-resolution image
+ggsave("bigram_sentiment_analysis.jpg", width = 10, height = 8, dpi = 300, device = "jpeg", quality = 50)
+
+```
+
+## Basic Word Cloud
+
+```{r}
+# Creating a basic word cloud after removing stop words
+cleaned_comments %>%
+  unnest_tokens(word, clean_comment) %>%               
+  anti_join(stop_words, by = "word") %>%               
+  count(word, sort = TRUE) %>%                         
+  with(wordcloud(word, n, max.words = 100))            # Generating word cloud
+
+
+```
+
+## Comparison Word Cloud using Sentiment Analysis
+
+```{r}
+ #Performing sentiment analysis and create a comparison word cloud
+cleaned_comments %>%
+  unnest_tokens(word, clean_comment) %>%                   # Tokenize words
+  inner_join(get_sentiments("bing"), by = "word") %>%      # Join with sentiment lexicon
+  count(word, sentiment, sort = TRUE) %>%                  # Count words by sentiment
+  acast(word ~ sentiment, value.var = "n", fill = 0) %>%   # Reshape data for comparison cloud
+  comparison.cloud(colors = c("grey50", "grey10"), max.words = 100)
+ggsave("wordcloud2.jpg", width = 10, height = 8, dpi = 300, device = "jpeg", quality = 50)
+```
+
+## Deductive Analysis
+
+### 3. Sentiment variation across user subgroups
+
+```{r subgroup-sentiment}
+# Identifying subgroups 
+user_subgroups <- cleaned_comments %>%
+  mutate(subgroup = case_when(
+    str_detect(threads.text, "Need help choosing an EV") ~ "Others",
+    str_detect(threads.text, "Toyota") ~ "Tech Enthusiasts",
+    str_detect(threads.text, "used EV market") ~ "Skeptics",
+    TRUE~"Environmentalist"
+  ))
+
+# Analyze sentiment across subgroups
+sentiment_summary <- user_subgroups %>%
+  group_by(subgroup) %>%
+  summarise(mean_sentiment = mean(threads.score, na.rm = TRUE),  
+            count = n()) %>%
+  arrange(desc(mean_sentiment))
+
+print(sentiment_summary)
+
+# Visualizing sentiment across subgroups
+ggplot(sentiment_summary, aes(x = reorder(subgroup, mean_sentiment), y = mean_sentiment, fill = subgroup)) +
+  geom_col(show.legend = FALSE) +
+  labs(title = "Sentiment Variation Across User Subgroups",
+       x = "User Group",
+       y = "Mean Sentiment Score") +
+  coord_flip() +
+  theme_minimal() +
+  theme(
+    title = element_text(size = 16, face = "bold"),
+    axis.title.x = element_text(size = 14, face = "bold"),
+    axis.title.y = element_text(size = 14, face = "bold"),
+    axis.text.x = element_text(size = 12),
+    axis.text.y = element_text(size = 12),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    plot.margin = margin(t = 20, r = 20, b = 20, l = 20)
+  )
+  
+# plot saved as a high-resolution image
+ ggsave("sentiment_variation.jpg", width = 10, height = 8, dpi = 300,device=jpeg,quality=50)
+```
+
+### 4. Categorization of posts into topics or themes
+
+```{r topic-modeling}
+# Prepare document-term matrix
+dtm <- tokenized_comments %>%
+  count(comments.comment_id, word) %>%
+  cast_dtm(comments.comment_id, word, n)
+
+
+# Perform LDA topic modeling
+lda_model <- LDA(dtm, k = 5, control = list(seed = 1234))
+
+lda_model
+
+as.data.frame(terms(lda_model,10))
+
+# Extract and visualize topics
+topics <- tidy(lda_model, matrix = "beta") %>%
+  group_by(topic) %>%
+  slice_max(beta, n = 10) %>%
+  ungroup() %>%
+  arrange(topic, -beta)
+
+ggplot(topics, aes(reorder(term, beta), beta, fill = factor(topic))) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~ topic, scales = "free") +
+  coord_flip() +
+  labs(title = "Top 10 Terms in Each LDA Topic", x = NULL, y = "Beta")
+```
+
+## How similar are the five topics?
+
+This question is particularly interesting because it allows us to (possibly) cluster homogeneous topics. To get a better idea of our LDA model and about the similarity among the different topics, we can plot our results using the following chunck of code. 
+
+```{r}
+lda.similarity <- as.data.frame(lda_model@beta) %>%
+  scale() %>%
+  dist(method = "euclidean") %>%
+  hclust(method = "ward.D2")
+
+par(mar = c(0, 4, 4, 2))
+plot(lda.similarity,
+     main = "LDA topic similarity by features",
+     xlab = "",
+     sub = "")
+```
+
+The plot is called dendogram and visualizes a hierarchial clustering. The x-axis gives you the topics and the clusters of these topics. Put differently, it gives you information on the smilarity of the topics. On the y-axis, we see the dissmilarity (or distance) between our five topics.
+
+This dendrogram suggests that the LDA model has identified:
+
+-   **Two main groups of topics**:
+
+    -   Topics 1, 4, and 5 (more similar to each other).
+
+    -   Topic 3, which is moderately similar to the first group.
+
+-   **A distinct topic**: Topic 2, which stands out as the least similar to the other topics.
+
+In practical terms, you might interpret these clusters as:
+
+-   **Cluster 1** (Topics 1, 4, and 5): Representing topics that discuss similar aspects of the main theme Electric Vehicles
+
+-   **Topic 2**: A unique or outlier theme that doesn’t share much overlap with the others, potentially indicating a specialized or less common sub-theme.
+
+### 5. Key variables influencing sentiment
+
+```{r variable-influence}
+
+sentiment_variables <- cleaned_comments %>%
+  inner_join(sentiment_scores, by = "comments.comment_id") %>%
+  select(sentiment, threads.score, comments.score, threads.comments)
+
+# Correlation analysis
+cor_matrix <- cor(sentiment_variables, use = "complete.obs")
+
+# Visualize correlations
+corrplot::corrplot(cor_matrix, method = "circle", type = "upper", tl.col = "black", tl.srt = 45)
+
+# Linear regression
+model <- lm(sentiment ~ threads.score + comments.score + threads.comments, data = sentiment_variables)
+summary(model)
+```
+
+# Using the count() function, determine how many comments are from each thread author in the dataset?
+
+```{r}
+redditt_ev_analysis_data|>
+  count(threads.author)
+```
+
+# How many comments are from each thread title in the dataset?
+
+```{r}
+redditt_ev_analysis_data|>
+  count(threads.title)
+```
+
+# PYTHON ANALYSIS
+
+```{python}
+
+import pandas as pd
+import re
+# Load the dataset
+redditt_ev_analysis_data = pd.read_csv('C:/Users/bedwi/OneDrive/MS ANALYTICS/ITEC 724 BIG DATA AND TEXT MINING/PROJECT/Datasets/redditt_ev_analysis_data.csv',encoding='ISO-8859-1')
+
+redditt_ev_analysis_data ['comments.comment'] = redditt_ev_analysis_data['comments.comment'].astype(str).replace(
+    to_replace=r'[^\x20-\x7E]',  # Matches non-printable ASCII characters
+    value='', 
+    regex=True
+)
+# Display the first few rows of the dataframe
+redditt_ev_analysis_data.head()
+
+
+```
+
+```{python}
+# Check for missing values
+missing_values = redditt_ev_analysis_data.isnull().sum()
+
+print("Missing values in each column:\n", missing_values)
+
+# Check for duplicates
+duplicate_rows = redditt_ev_analysis_data.duplicated().sum()
+print("Number of duplicate rows:", duplicate_rows)
+
+```
+
+#Overview about the dataset
+
+```{python}
+# Displaying basic information about the dataset
+print("Basic Information about the Dataset:")
+redditt_ev_analysis_data.info()
+
+
+#  first 10 rows of the 'comments' column
+print(redditt_ev_analysis_data['comments.comment'].head(10))
+```
+
+# Summary Statistics
+
+Next, we'll look at some summary statistics for our numerical columns – 'comments.score' and 'comments.upvotes'. This will give us an understanding of the distribution of engagement metrics in the dataset.
+
+```{python}
+print("Summary Statistics for Numerical Columns:")
+redditt_ev_analysis_data.describe()
+```
+
+# Distribution of Comments
+
+Understanding how the comments are distributed over time can offer insights into trends and patterns in public opinion. Let's plot a timeline to see the distribution of comments by their 'comments.date' dates.
+
+```{python}
+import matplotlib.pyplot as plt
+import seaborn as sns
+import pandas as pd
+
+# Converting 'date' to datetime
+redditt_ev_analysis_data['comments.date'] = pd.to_datetime(redditt_ev_analysis_data['comments.date'])
+
+# Create a timeline plot for comments
+plt.figure(figsize=(12, 6))
+redditt_ev_analysis_data['comments.date'].dt.date.value_counts().sort_index().plot(kind='line', color='blue', marker='o')
+plt.title('Distribution of Comments')
+plt.xlabel('Date')
+plt.ylabel('Number of Comments')
+plt.xticks(rotation=45)
+plt.tight_layout()
+
+# Saving the image with specified resolution and compression
+plt.savefig(
+    'comments_timeline.jpg', 
+    dpi=600,    
+    format='jpg',  
+    bbox_inches='tight'  
+)
+plt.show()
+
+```
+
+# A summary table of the number of comments per date
+
+```{python}
+ 
+comment_distribution = redditt_ev_analysis_data['comments.date'].dt.date.value_counts().sort_index()
+print("Number of Comments per Date:")
+print(comment_distribution)
+```
+
+## Sentiment Analysis
+
+Defining and Calculating Sentiment I will use the TextBlob library to perform sentiment analysis. TextBlob offers a simple API to calculate the sentiment of text, which returns a polarity score ranging from -1 (very negative) to 1 (very positive).
+
+```{python}
+from textblob import TextBlob
+
+# Function to calculate sentiment polarity
+def calculate_sentiment(text):
+    return TextBlob(text).sentiment.polarity
+
+# Apply the function to each comment
+redditt_ev_analysis_data['Sentiment'] = redditt_ev_analysis_data['comments.comment'].apply(calculate_sentiment)
+
+# Display the first few rows with sentiment scores
+redditt_ev_analysis_data[['comments.comment', 'Sentiment']].head()
+```
+
+# Analyzing Sentiment Distribution
+
+With sentiment scores computed for each comment, let's analyze the distribution of these sentiments. This will help us understand the overall mood of the comments – whether they lean towards positive, negative, or neutral.
+
+```{python}
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+# Visualizing the sentiment distribution
+plt.figure(figsize=(10, 6))
+sns.histplot(redditt_ev_analysis_data['Sentiment'], bins=30, kde=True)
+plt.title('Sentiment Polarity Distribution')
+plt.xlabel('Sentiment Polarity')
+plt.ylabel('Number of Comments')
+plt.show()
+
+```
+
+# Sentiment Distribution Summary
+
+```{python}
+# Define sentiment categories
+def sentiment_category(score):
+    if score > 0:
+        return 'Positive'
+    elif score < 0:
+        return 'Negative'
+    else:
+        return 'Neutral'
+
+# Categorize sentiments
+redditt_ev_analysis_data['Sentiment Category'] = redditt_ev_analysis_data['Sentiment'].apply(sentiment_category)
+
+# Create a summary table for sentiment distribution
+sentiment_summary = redditt_ev_analysis_data['Sentiment Category'].value_counts()
+print("Sentiment Distribution Summary:")
+print(sentiment_summary)
+```
+
+# Comment Frequency Over Time
+
+To further understand the engagement pattern, let's create a time series plot that illustrates the frequency of comments over time. This will visually showcase how the engagement has changed overtime. To vary with earlier temporal plot, we will use a bar-plot.
+
+```{python}
+# Create a bar chart for the number of comments per day
+plt.figure(figsize=(15, 7))
+redditt_ev_analysis_data['comments.date'].dt.date.value_counts().sort_index().plot(kind='bar', color='teal')
+plt.title('Daily Comment Frequency Over Time')
+plt.xlabel('Date')
+plt.ylabel('Number of Comments')
+plt.xticks(rotation=90)
+plt.tight_layout()
+plt.show()
+```
+
+## 1. Most Frequently Occurring Keywords and Phrases
+
+```{r}
+
+# Tokenize the text in the 'comments.comment' column into words (unigrams)
+tokens <- redditt_ev_analysis_data|>
+  unnest_tokens(word, comments.comment) 
+
+# Remove stopwords
+tokens_clean <- tokens %>%
+  anti_join(stop_words)
+
+# Count the most frequent words
+word_counts <- tokens_clean |>
+  count(word, sort = TRUE)
+
+# View the top 10 most frequent words
+print(word_counts |> top_n(10, n))
+
+```
+
+## 2. Sentiment Variation Across User Groups
+
+```{r}
+
+tokens <- redditt_ev_analysis_data %>%
+  unnest_tokens(word, comments.comment)
+
+#removing stop words
+tokens_clean <- tokens %>%
+  anti_join(stop_words)
+
+#  sentiment analysis using Bing lexicon
+sentiment_data <- tokens_clean %>%
+  inner_join(get_sentiments("bing"))
+
+sentiment_by_group <- sentiment_data %>%
+  group_by(comments.author) %>%
+  summarise(sentiment_score = sum(sentiment == "positive") - sum(sentiment == "negative"))
+
+# Comparison sentiment across user groups
+print(sentiment_by_group)
+```
+
+## 3. Developing a Categorization Model
+
+```{r}
+
+# Create a corpus from the 'comments.comment' column
+corpus <- Corpus(VectorSource(redditt_ev_analysis_data$comments.comment))
+
+# Text preprocessing steps
+corpus_clean <- corpus %>%
+  tm_map(content_transformer(tolower)) %>%        # Converts to lowercase
+  tm_map(removePunctuation) %>%                   # Removes punctuation
+  tm_map(removeNumbers) %>%                       # Removes numbers
+  tm_map(removeWords, stopwords("english")) %>%   # Removes stopwords (English)
+  tm_map(stripWhitespace)                         # Removes extra whitespace
+
+#  document-term matrix (DTM) after cleaning the text
+dtm <- DocumentTermMatrix(corpus_clean)
+
+# Splitting data into training/testing sets based on 'threads.title'
+set.seed(123)
+trainIndex <- createDataPartition(redditt_ev_analysis_data$threads.title, p = 0.8, list = FALSE)
+train_data <- dtm[trainIndex, ]
+test_data <- dtm[-trainIndex, ]
+
+# Converting DTM to matrix format
+train_matrix <- as.matrix(train_data)
+test_matrix <- as.matrix(test_data)
+
+# Converting the matrix to data frames
+train_df <- as.data.frame(train_matrix)
+test_df <- as.data.frame(test_matrix)
+
+# Training the Naive Bayes classifier using the training data
+model <- naiveBayes(x = train_df, y = as.factor(redditt_ev_analysis_data$threads.title[trainIndex]))
+
+# Predicting on the test set
+predictions <- predict(model, test_df)
+
+# Evaluating the model's performance (Prediction and Accuracy)
+confusionMatrix(predictions, as.factor(redditt_ev_analysis_data$threads.title[-trainIndex]))
+
+```
+
+## 4. Frequency of EV-Related Terms Over Time
+
+```{r}
+
+# Convert 'comments.date' to a datetime object
+redditt_ev_analysis_data$comments.date <- ymd_hms(redditt_ev_analysis_data$comments.date)
+
+# Select keywords related to electric vehicles
+ev_terms <- c("electric", "vehicle", "EV", "battery", "charging","cars")
+
+# Filter tokens by date and keyword in the 'comments.comment' column
+term_frequency <- tokens |>
+  filter(word %in% ev_terms) |>
+  count(comments.date, word)
+
+# Plot term frequency over time
+# Visualization of Term Frequency Over Time
+ggplot(term_frequency, aes(x = comments.date, y = n, color = word, group = word)) +
+  geom_line() +  # Increase line thickness
+  labs(title = "EV-related Terms Frequency Over Time",
+       x = "Date",
+       y = "Frequency") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Rotate x-axis labels
+
+
+```
+
+## 5. Common N-Grams Associated with Positive and Negative Sentiment
+
+```{r}
+bigrams <- redditt_ev_analysis_data %>%
+  unnest_tokens(bigram, comments.comment, token = "ngrams", n = 2)
+# Separates bigrams into two columns: word1 and word2
+bigrams_separated <- bigrams %>%
+  separate(bigram, into = c("word1", "word2"), sep = " ")
+
+bigrams_clean <- bigrams_separated %>%
+  filter(!word1 %in% stop_words$word, !word2 %in% stop_words$word)
+# Performing sentiment analysis on both word1 and word2 using the Bing lexicon
+bigram_sentiment <- bigrams_clean %>%
+  left_join(get_sentiments("bing"), by = c("word1" = "word")) %>%
+  rename(sentiment_word1 = sentiment) %>%
+  left_join(get_sentiments("bing"), by = c("word2" = "word")) %>%
+  rename(sentiment_word2 = sentiment)
+
+#  Bigrams based on sentiment of word1 or word2
+bigram_sentiment_summary <- bigram_sentiment %>%
+  mutate(overall_sentiment = case_when(
+    sentiment_word1 == "positive" | sentiment_word2 == "positive" ~ "positive",
+    sentiment_word1 == "negative" | sentiment_word2 == "negative" ~ "negative",
+    TRUE ~ "neutral"
+  )) %>%
+  group_by(overall_sentiment) %>%
+  count(word1, word2, sort = TRUE) %>%
+  top_n(10, n)
+
+
+print(bigram_sentiment_summary)
+
+```
+
+# Calculate the Probability of Bigrams
+
+```{r}
+bigram_counts <- bigrams_clean %>%
+count(word1, word2, sort = TRUE)
+
+word1_counts <- bigrams_clean %>%
+count(word1, sort = TRUE) %>%
+rename(total = n)
+
+bigram_probabilities <- bigram_counts %>%
+left_join(word1_counts, by = "word1") %>%
+mutate(probability = n / total)
+```
+
+# Use the Bigram Model to Predict the Next Word
+
+```{r}
+predict_next_word <- function(current_word) {
+  bigram_probabilities %>%
+    filter(word1 == current_word) %>%
+      arrange(desc(probability)) %>%
+      head(5)
+}
+
+predict_next_word("electric")
+```
+
+## 6. Topic Modeling to Identify Latent Themes
+
+```{r}
+
+# Preprocess the 'comments.comment' column and create DocumentTermMatrix
+dtm <- DocumentTermMatrix(Corpus(VectorSource(redditt_ev_analysis_data$comments.comment)))
+
+# Preprocess the 'comments.comment' column
+corpus <- Corpus(VectorSource(redditt_ev_analysis_data$comments.comment))
+
+# Text preprocessing: remove stopwords, convert to lowercase, remove punctuation and numbers
+corpus_clean <- corpus %>%
+  tm_map(content_transformer(tolower)) %>%        # Converts to lowercase
+  tm_map(removePunctuation) %>%                   # Removes punctuation
+  tm_map(removeNumbers) %>%                       # Removes numbers
+  tm_map(removeWords, stopwords("english")) %>%   # Removes stopwords (English)
+  tm_map(stripWhitespace)                         # Removes extra whitespace
+
+# DocumentTermMatrix after cleaning the text
+dtm <- DocumentTermMatrix(corpus_clean)
+
+# I am removing empty rows from the DocumentTermMatrix
+dtm_clean <- dtm[rowSums(as.matrix(dtm)) > 0, ]
+
+# Fitting an LDA model to identify 5 latent topics
+lda_model <- LDA(dtm_clean, k = 5, control = list(seed = 1234))
+
+# Get the terms associated with each topic
+topics <- tidy(lda_model, matrix = "beta")
+
+#  top terms per topic
+top_terms <- topics %>%
+  group_by(topic) %>%
+  top_n(10, beta) %>%
+  ungroup() %>%
+  arrange(topic, -beta)
+
+print(top_terms)#Displays the most significant terms associated with each of the 5 topics.
+
+```
+
+```{r}
+tokens <- redditt_ev_analysis_data$comments.comment%>%
+tolower() %>%
+word_tokenizer()
+
+```
+
+# Create a Vocabulary and Term Co-Occurrence Matrix
+
+```{r}
+it <- itoken(tokens, progressbar = FALSE)
+vocab <- create_vocabulary(it)
+vectorizer <- vocab_vectorizer(vocab)
+
+tcm <- create_tcm(it, vectorizer, skip_grams_window = 5L)
+
+```
+
+# Fit the GloVe Model to the TCM
+
+```{r}
+glove_model <- GlobalVectors$new(rank = 50, x_max = 10)
+word_vectors <- glove_model$fit_transform(tcm, n_iter = 20)
+
+```
+
+# Explore the word embeddings.
+
+```{r}
+ev_vector <- word_vectors["ev", , drop = FALSE]
+print(ev_vector)
+```
+
+# Find Words Similiar to “ev”:
+
+```{r}
+cos_sim <- sim2(x = word_vectors, y = ev_vector, method = "cosine", norm = "l2")
+head(sort(cos_sim[,1], decreasing = TRUE), 5)
+```
